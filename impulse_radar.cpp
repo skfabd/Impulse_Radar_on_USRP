@@ -25,12 +25,17 @@
 #include <thread>
 //#include "matplotlibcpp.h" 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
+#include <cstdlib>
+
 
 
 
 
 //namespace plt = matplotlibcpp;
 namespace po = boost::program_options;
+namespace fs = std::filesystem;
 
 
 /***********************************************************************
@@ -244,7 +249,20 @@ size_t write_idx = 0;
     return dt;
 }
 
+/**********************************************************************
+Timestamp for folder name
+**********************************************************************/
 
+std::string get_timestamp() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+
+    std::tm *ptm = std::localtime(&now_c);
+
+    std::ostringstream oss;
+    oss << std::put_time(ptm, "%Y-%m-%d_%H-%M-%S"); // format: 2026-03-27_14-30-05
+    return oss.str();
+}
 /***********************************************************************
  * Post-Processing
  
@@ -252,7 +270,8 @@ size_t write_idx = 0;
 void post_processing(std::vector<std::complex<float>> signal_tx, 
 double rx_rate,
 long double dt,
-std::vector<std::complex<short>>& all_buffs)    
+std::vector<std::complex<short>>& all_buffs,
+std::string folder)    
 
 { 
 
@@ -315,7 +334,9 @@ std::vector<std::complex<short>>& all_buffs)
       //save truncate
       
 
-namespace fs = std::filesystem;
+
+
+
 
     int max_id = 0;
 
@@ -331,7 +352,7 @@ namespace fs = std::filesystem;
     int idx = max_id + 1;
     
 
-    std::string filename = "scan" + std::to_string(idx) + ".txt";
+    std::string filename =  "scan" + std::to_string(idx) + ".txt";
     
     //binary write for faster disk write
     std::ofstream outFile_tr(filename, std::ios::binary);
@@ -364,14 +385,81 @@ outFile_tr.close();
         std::cerr << "Error opening file for writing!" << std::endl;
     }
  */  
+     // plot raw data 
+     
+/*
+    int m = rx_trunc.size();
+    
+    // pulse shaping
+    float beta = 0.25;  // roll-off factor
+    int span = 6;
+    int sps = 1;    
+     // in symbols
+    auto rrc = rrc_filter(beta, span, sps);
+    
+    rx_trunc = convolve(rx_trunc, rrc);
+     
+    std::vector<float> mag(m), phase(m), rx_dB(m), rx_real(m), rx_image(m), time(m), rx_real_dB(m);
+    
 
- 
+    for (size_t i = 0; i < m; ++i) {
+        mag[i] = std::abs(rx_trunc[i]);
+        phase[i] = std::arg(rx_trunc[i]);
+        time[i] = i / rx_rate;
+        rx_dB[i] = 20 * std::log10(mag[i]);
+        rx_real[i] = rx_trunc[i].real();
+        rx_image[i] = rx_trunc[i].imag();
+        rx_real_dB[i] = 20 * std::log10(rx_real[i]);
+    }
+    
+
+    std::vector<float> tx_real(samples_tx.size());
+    for (size_t i = 0; i < samples_tx.size(); i++)
+          tx_real[i] = 200*std::real(samples_tx[i]);
+     
+    int n = tx_real.size();     
+    std::vector<float> t_t(n);
+    for (size_t i = 0; i < n; ++i) {
+        t_t[i] = i / rx_rate;
+    }
+    
+   
+    */
+    
+    
 }
 /***********************************************************************
  * Main function
  **********************************************************************/
 int UHD_SAFE_MAIN(int argc, char* argv[])
 {
+
+
+
+    // preparing the host computer
+    
+    // network configuration
+    system("sudo ip link set dev enp1s0f0 mtu 9000");
+    system("sudo ip link set dev enp1s0f1 mtu 9000");
+    system("sudo sysctl -w net.core.rmem_max=33445532");
+    system("sudo sysctl -w net.core.wmem_max=33445532");
+    system("sudo sysctl -w net.core.rmem_default=33445532");
+    system("sudo sysctl -w net.core.wmem_default=33445532");
+    system("sudo sysctl net.core.wmem_max");
+    system("sudo sysctl -p");
+    system("sudo ethtool -G enp1s0f0 tx 32768 rx 32768");
+    system("sudo ethtool -G enp1s0f1 tx 32768 rx 32768");
+    
+    //CPU Tuning
+    
+    //system("bash -c 'for ((i=0;i<$(nproc --all);i++)); do sudo cpufreq-set -c $i -r -g performance; done'");
+    //system("bash -c 'for ((i=0;i<$(nproc --all);i++)); do sudo cpufreq-set -c $i -r -g powersave; done'");
+    
+
+    
+    
+    
+    
     // transmit variables to be set by po
     std::string tx_args, wave_type, tx_ant, tx_subdev, ref, otw, tx_channels;
     double tx_rate, tx_freq, tx_gain, wave_freq, tx_bw;
@@ -610,6 +698,24 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
       rx_usrp->set_time_source("internal");
       rx_usrp->set_time_unknown_pps(uhd::time_spec_t(0.0));
     
+  
+  
+
+ std::string folder = "results_" + get_timestamp();
+
+ fs::create_directory(folder);
+
+ std::cout << "Created folder: " << folder << std::endl;
+ 
+fs::copy_file("myClutterRemoival.m", folder + "/myClutterRemoival.m", fs::copy_options::overwrite_existing);
+fs::copy_file("allone.txt", folder + "/allone.txt", fs::copy_options::overwrite_existing);
+
+ std::cout << "Copied Post Processing " << std::endl;
+ 
+fs::current_path(folder); 
+ 
+system("/usr/local/MATLAB/R2023b/bin/matlab -batch \"myClutterRemoival.m\"&");
+  
     // 10 scans
     for (int scan=0; scan<30; scan++){
      stop_signal_called = false;
@@ -665,8 +771,6 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
           }
       }
       // IQ
-      
-
 
 */
         // ===================================================================
@@ -802,7 +906,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
       stop_signal_called = true;
       transmit_thread.join();
       
-      post_processing( signal_tx,  rx_rate, dt, all_buffs) ;
+      post_processing( signal_tx,  rx_rate, dt, all_buffs, folder) ;
 
       // finished
       std::cout << std::endl << "Done!" << std::endl << std::endl;
